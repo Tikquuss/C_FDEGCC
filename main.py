@@ -150,22 +150,22 @@ class SigmoidModel(nn.Module):
 
 ########## data ##############
 def process_frame(client_df, invoice_df) :
-	client_df['creation_day'] = client_df['creation_date'].apply(lambda date: int(date[:2]))
-	client_df['creation_month'] = client_df['creation_date'].apply(lambda date: int(date[3:5]))
-	client_df['creation_year'] = client_df['creation_date'].apply(lambda date: int(date[-4:]))
-	client_df = client_df.sort_values(by=['client_id'], axis=0, ascending=True, inplace=False)
-	client_df = client_df.drop(['creation_date'], axis=1)
+    client_df['creation_day'] = client_df['creation_date'].apply(lambda date: int(date[:2]))
+    client_df['creation_month'] = client_df['creation_date'].apply(lambda date: int(date[3:5]))
+    client_df['creation_year'] = client_df['creation_date'].apply(lambda date: int(date[-4:]))
+    client_df = client_df.sort_values(by=['client_id'], axis=0, ascending=True, inplace=False)
+    client_df = client_df.drop(['creation_date'], axis=1)
 
-	invoice_df['invoice_day'] = invoice_df['invoice_date'].apply(lambda date: int(date[-2:]))
-	invoice_df['invoice_month'] = invoice_df['invoice_date'].apply(lambda date: int(date[5:7]))
-	invoice_df['invoice_year'] = invoice_df['invoice_date'].apply(lambda date: int(date[0:4]))
-	invoice_df = invoice_df.sort_values(by=['client_id', 'invoice_date'], axis=0, ascending=True, inplace=False)
-	invoice_df = invoice_df.drop(['invoice_date'], axis=1)
+    invoice_df['invoice_day'] = invoice_df['invoice_date'].apply(lambda date: int(date[-2:]))
+    invoice_df['invoice_month'] = invoice_df['invoice_date'].apply(lambda date: int(date[5:7]))
+    invoice_df['invoice_year'] = invoice_df['invoice_date'].apply(lambda date: int(date[0:4]))
+    invoice_df = invoice_df.sort_values(by=['client_id', 'invoice_date'], axis=0, ascending=True, inplace=False)
+    invoice_df = invoice_df.drop(['invoice_date'], axis=1)
 
-	invoice_df['counter_type'] = invoice_df['counter_type'].apply(lambda x : 0 if x == "ELEC" else 1)
-	invoice_df['counter_statue'] = invoice_df['counter_statue'].apply(lambda x : 0 if type(x) == str else x)
+    invoice_df['counter_type'] = invoice_df['counter_type'].apply(lambda x : 0 if x == "ELEC" else 1)
+    invoice_df['counter_statue'] = invoice_df['counter_statue'].apply(lambda x : 0 if type(x) == str else x)
 
-	return client_df, invoice_df
+    return client_df, invoice_df
 
 class FDDataset(Dataset):
     def __init__(self, client_df = None, invoice_df = None, data = None, sorted = True, reverse=False,
@@ -366,7 +366,7 @@ def train_step(model, optimizer, criterion, data, device, permute_x2 = True, des
         y = y.to(device)
         optimizer.zero_grad()
         if permute_x2 :
-		x2 = x2.contiguous().permute(1, 0, 2) # (seq_len, batch_size, _)
+            x2 = x2.contiguous().permute(1, 0, 2) # (seq_len, batch_size, _)
         logits = model(x1, x2, seq_lens)
         try :
             loss = criterion(logits, y)
@@ -405,7 +405,7 @@ def evaluate(model, criterion, data, device, permute_x2 = True, description = "e
         x2 = x2.to(device)
         y = y.to(device)
         if permute_x2 :
-        	x2 = x2.contiguous().permute(1, 0, 2) # (seq_len, batch_size, _)
+            x2 = x2.contiguous().permute(1, 0, 2) # (seq_len, batch_size, _)
         logits = model(x1, x2, seq_lens)
         try :
             loss = criterion(logits, y)
@@ -434,10 +434,10 @@ def train(model, optimizer, criterion, train_data, val_data, device, n_epochs, t
     permute_x2 = True
     #if isinstance(model, Transformer) :
     if str(type(model)).split(".")[-1] == "Transformer'>" :
-    	permute_x2 = False
+        permute_x2 = False
     #if isinstance(model, SigmoidModel):
     if str(type(model)).split(".")[-1] == "SigmoidModel'>" :
-    	#if isinstance(model.m1, Transformer):
+        #if isinstance(model.m1, Transformer):
         if str(type(model.m1)).split(".")[-1] == "Transformer'>" :
             permute_x2 = False
 
@@ -459,8 +459,10 @@ def train(model, optimizer, criterion, train_data, val_data, device, n_epochs, t
                 best_score = val_fs
 
             print("val -> loss : {}, acc : {}, f1-score : {}".format(val_loss, val_acc, val_fs))
-      
-    model.load_state_dict(torch.load(save_path))  
+    try :
+        model.load_state_dict(torch.load(save_path))  
+    except :
+        pass
     return model
 
 def setting(model_class, lr = 3e-5, type_ = 0, model_kwargs = {}) :
@@ -502,7 +504,7 @@ def get_upsampled(train_data):
                           replace=True, # sample with replacement
                           n_samples=len(not_fraud), # match number in majority class
                           random_state=27) # reproducible results
-	  # combine majority and upsampled minority
+      # combine majority and upsampled minority
     upsampled = not_fraud +  fraud_upsampled # this become a training data
     return upsampled
 
