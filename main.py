@@ -23,7 +23,7 @@ class Transformer(nn.Module):
     def __init__(self, x1_dim, x2_dim, output_dim = 2, d_model: int = 512, num_heads: int = 8, d_k = None, d_v = None, 
                  num_encoder_layers: int = 6, dim_feedforward: int = 2048, dropout: float = 0.1,
                 activation: str = "relu") -> None:
-        super(Model, self).__init__()
+        super(Transformer, self).__init__()
 
         d_k = d_k if d_k is not None else d_model 
         d_v = d_v if d_v is not None else d_model
@@ -140,8 +140,8 @@ class RNN(nn.Module):
         return out
 
 class SigmoidModel(nn.Module):
-    def __init__():
-        super().__init__(model)
+    def __init__(self, model):
+        super().__init__()
         self.m1 = model
         self.m2 = nn.Sigmoid()
     def forward(self, x1, x2, seq_lens):
@@ -311,21 +311,25 @@ class FDDataset4Test(FDDataset):
             )
         return client_ids, torch.stack([x for x in x1]), torch.stack(x2_temp), seq_lens
 
-    def run_test(self, model, device, csv_file, description = "test step ...", type_ = 0):
+    def run_test(self, model, device, csv_file, type_ = 0):
         model.eval()
         prob_list = [] # list of probability
         y_pred_list = []
         client_ids = []
+        description = "test step ..."
 
-        if isinstance(model, Transformer) :
-        	permute_x2 = False
-        if isinstance(model, SigmoidModel):
-        	if isinstance(model.m1, Transformer):
-        		permute_x2 = False
+        permute_x2 = True
+        #if isinstance(model, Transformer) :
+        if str(type(model)).split(".")[-1] == "Transformer'>" :
+            permute_x2 = False
+        #if isinstance(model, SigmoidModel):
+        if str(type(model)).split(".")[-1] == "SigmoidModel'>" :
+            #if isinstance(model.m1, Transformer):
+            if str(type(model.m1)).split(".")[-1] == "Transformer'>" :
+                permute_x2 = False
 
         for batch in tqdm.notebook.tqdm(self, desc=description) :
             ids, x1, x2, seq_lens = batch
-            print(x1.shape, x2.shape)
             client_ids.extend(ids)
             x1 = x1.to(device)
             x2 = x2.to(device)
@@ -336,7 +340,7 @@ class FDDataset4Test(FDDataset):
             if type_ == 0 : # non sigmoid
                 prob, label_pred = logits.max(1)
                 y_pred_list.extend(label_pred.cpu().numpy())
-                prob_list.extend(prob.cpu().numpy())
+                prob_list.extend(prob.cpu().detach().numpy())
             else :
                 #y_pred_list.extend((logits>0.5).to(int).cpu().numpy())
                 y_pred_list.extend((logits<0.5).to(int).cpu().numpy())
@@ -362,7 +366,7 @@ def train_step(model, optimizer, criterion, data, device, permute_x2 = True, des
         y = y.to(device)
         optimizer.zero_grad()
         if permute_x2 :
-        	x2 = x2.contiguous().permute(1, 0, 2) # (seq_len, batch_size, _)
+		x2 = x2.contiguous().permute(1, 0, 2) # (seq_len, batch_size, _)
         logits = model(x1, x2, seq_lens)
         try :
             loss = criterion(logits, y)
@@ -418,7 +422,6 @@ def evaluate(model, criterion, data, device, permute_x2 = True, description = "e
         if type_ == 0 : # non sigmoid
             y_list.extend(y.cpu().numpy())
             _, label_pred = logits.max(1)
-            print("======", label_pred)
             y_pred_list.extend(label_pred.cpu().numpy())
         else :
             y_list.extend(y.cpu().numpy())
@@ -429,11 +432,14 @@ def evaluate(model, criterion, data, device, permute_x2 = True, description = "e
 def train(model, optimizer, criterion, train_data, val_data, device, n_epochs, type_ = 0, save_path = "./model.pth") :
     best_score = 0
     permute_x2 = True
-    if isinstance(model, Transformer) :
+    #if isinstance(model, Transformer) :
+    if str(type(model)).split(".")[-1] == "Transformer'>" :
     	permute_x2 = False
-    if isinstance(model, SigmoidModel):
-    	if isinstance(model.m1, Transformer):
-    		permute_x2 = False
+    #if isinstance(model, SigmoidModel):
+    if str(type(model)).split(".")[-1] == "SigmoidModel'>" :
+    	#if isinstance(model.m1, Transformer):
+        if str(type(model.m1)).split(".")[-1] == "Transformer'>" :
+            permute_x2 = False
 
     for i in range(n_epochs):
         description = "epoch %d"%i
