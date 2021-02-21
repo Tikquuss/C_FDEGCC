@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 
 from sklearn.model_selection import train_test_split
+from sklearn.utils import resample
 from sklearn.metrics import f1_score, confusion_matrix, accuracy_score
 
 import torch
@@ -201,9 +202,7 @@ class FDDataset(Dataset):
             target = client["target"]
             target = torch.tensor(target, dtype=torch.long)
             
-            print(client)
             client = client.drop(["client_id",'target'])
-            print(client)
             #x1 = [client[col] for col in client_df_columns if col != "client_id"]
             #x1 = [client.values[0]]
             #x1.extend(client.values[2:])
@@ -312,11 +311,17 @@ class FDDataset4Test(FDDataset):
             )
         return client_ids, torch.stack([x for x in x1]), torch.stack(x2_temp), seq_lens
 
-    def run_test(self, model, device, csv_file, permute_x2 = True, description = "test step ...", type_ = 0):
+    def run_test(self, model, device, csv_file, description = "test step ...", type_ = 0):
         model.eval()
         prob_list = [] # list of probability
         y_pred_list = []
         client_ids = []
+
+        if isinstance(model, Transformer) :
+        	permute_x2 = False
+        if isinstance(model, SigmoidModel):
+        	if isinstance(model.m1, Transformer):
+        		permute_x2 = False
 
         for batch in tqdm.notebook.tqdm(self, desc=description) :
             ids, x1, x2, seq_lens = batch
@@ -452,19 +457,18 @@ def train(model, optimizer, criterion, train_data, val_data, device, n_epochs, t
     model.load_state_dict(torch.load(save_path))  
     return model
 
-def setting(lr = 3e-5,  type_ = 0, model_kwargs = {}) :
+def setting(model_class, lr = 3e-5, type_ = 0, model_kwargs = {}) :
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     n_gpu = torch.cuda.device_count()
 
     if type_ == 0 :
         criterion = nn.CrossEntropyLoss()
-        model = Model(**model_kwargs)
+        model = model_class(**model_kwargs)
     else :
         criterion = nn.BCELoss()
         model_kwargs["output_dim"] = 1
-        model = M2(**model_kwargs)
-
+        model = SigmoidModel(model_class(**model_kwargs))
     
     optimizer = Adam(model.parameters(), lr=lr)
 
@@ -474,3 +478,44 @@ def setting(lr = 3e-5,  type_ = 0, model_kwargs = {}) :
         model = nn.DataParallel(model)
     
     return model, optimizer, criterion, device
+
+
+def get_upsampled(train_data):
+    # separate minority and majority classes
+    not_fraud = []
+    fraud = []
+    for x in train_data :
+        if x[2] == 0 :
+            not_fraud.append(x)
+        else :
+            fraud.append(x)
+
+
+    # upsample minority
+    fraud_upsampled = resample(fraud,
+                          replace=True, # sample with replacement
+                          n_samples=len(not_fraud), # match number in majority class
+                          random_state=27) # reproducible results
+	  # combine majority and upsampled minority
+    upsampled = not_fraud +  fraud_upsampled # this become a training data
+    return upsampled
+
+def get_undersampled(train_data):
+    # separate minority and majority classes
+    not_fraud = []
+    fraud = []
+    for x in train_data :
+        if x[2] == 0 :
+            not_fraud.append(x)
+        else :
+            fraud.append(x)
+      
+    # downsample majority
+    not_fraud_downsampled = resample(not_fraud,
+                                replace = False, # sample without replacement
+                                n_samples = len(fraud), # match minority n
+                                random_state = 27) # reproducible results
+    # combine minority and downsampled majority
+    downsampled = not_fraud_downsampled + fraud
+
+    return downsampled
