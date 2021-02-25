@@ -1,9 +1,17 @@
+# Copyright (c) 2021-present, Pascal Tikeng.
+# All rights reserved.
+#
+# This source code is licensed under the license found in the
+# LICENSE file in the root directory of this source tree.
+#
+
 import pandas as pd
 import numpy as np
 
 from sklearn.model_selection import train_test_split
 from sklearn.utils import resample
 from sklearn.metrics import f1_score, confusion_matrix, accuracy_score
+from sklearn import preprocessing
 
 import torch
 import torch.nn as nn
@@ -32,7 +40,7 @@ class Transformer(nn.Module):
         self.w0 = Dense(x1_dim, d_model, activation = linear_layer_activation) # Projects client information to R^d_model
         #nn.init.xavier_uniform_(self.w0.weight)
         self.drop0 = nn.Dropout(dropout)
-        self.w1 = Dense(x2_dim, d_model, activation = linear_layer_activation)
+        self.w1 = Dense(x2_dim, d_model, activation = linear_layer_activation) # Projects client invoices to R^d_model
         #nn.init.xavier_uniform_(self.w1.weight)
         self.drop1 = nn.Dropout(dropout)
 
@@ -44,6 +52,7 @@ class Transformer(nn.Module):
         self._reset_parameters()
 
     def _get_mask(self, x1, x2, seq_lens):
+        """paddind mask for padded invoices of the client"""
         bs = x1.size(0)
         mask1 = torch.zeros(bs, 1).to(torch.bool) # mask for x1 : False
         mask2 = []
@@ -146,7 +155,7 @@ class SigmoidModel(nn.Module):
         self.m2 = nn.Sigmoid()
     def forward(self, x1, x2, seq_lens):
         output = self.m1(x1, x2, seq_lens, softmax = False).squeeze()
-        return F.sigmoid(output)
+        return self.m2(output)
 
 ########## data ##############
 def process_frame(client_df, invoice_df) :
@@ -169,7 +178,7 @@ def process_frame(client_df, invoice_df) :
 
 class FDDataset(Dataset):
     def __init__(self, client_df = None, invoice_df = None, data = None, sorted = True, reverse=False,
-                 batch_size = 1): # data_frame and pipeline object
+                 batch_size = 1, normalize = False): # data_frame and pipeline object
         super().__init__()
 
         self.data = data if data is not None else self.prepare_data(client_df, invoice_df)
@@ -177,6 +186,7 @@ class FDDataset(Dataset):
             self.data.sort(reverse=reverse, key = lambda x : x[1].size(0))
         
         self.batch_size = len(self.data) if batch_size > len(self.data) else batch_size
+        self.normalize = normalize
 
     def __len__(self):
         return len(self.data)//self.batch_size
@@ -243,18 +253,28 @@ class FDDataset(Dataset):
         return torch.stack([x for x in x1]), torch.stack(x2_temp), torch.tensor(target), seq_lens
 
     def __iter__(self): # iterator to load data
-       assert self.batch_size
-       self.batch_size = len(self.data) if self.batch_size > len(self.data) else self.batch_size
-       n_samples = len(self.data)
-       i = 0
-       while n_samples > i :
-          i += self.batch_size
-          yield self.generate_batch(self.data[i-self.batch_size:i])
+    	assert self.batch_size
+    	self.batch_size = len(self.data) if self.batch_size > len(self.data) else self.batch_size
+    	n_samples = len(self.data)
+    	i = 0
+    	if not self.normalize :
+    		while n_samples > i :
+    			i += self.batch_size
+    			yield self.generate_batch(self.data[i-self.batch_size:i])
+    	else :
+    		while n_samples > i :
+    			i += self.batch_size
+    			x1, x2, target, seq_lens = self.generate_batch(self.data[i-self.batch_size:i])
+    			x1 = torch.from_numpy(preprocessing.normalize(x1)).to(x1.dtype)
+    			t = x2.dtype
+    			for i in range(x2.size(1)) :
+    				x2[:,i,:] =  torch.from_numpy(preprocessing.normalize(x2[:,i,:])).to(t)
+    			yield  x1, x2, target, seq_lens
 
 
 class FDDataset4Test(FDDataset):
     def __init__(self, client_df = None, invoice_df = None, sorted = True, reverse=False,
-                 batch_size = 1): # data_frame and pipeline object
+                 batch_size = 1, normalize = False): # data_frame and pipeline object
         #super().__init__()
 
         self.data = self.prepare_data(client_df, invoice_df)
@@ -262,6 +282,7 @@ class FDDataset4Test(FDDataset):
             self.data.sort(reverse=reverse, key = lambda x : x[1].size(0))
         
         self.batch_size = len(self.data) if batch_size > len(self.data) else batch_size
+        self.normalize = normalize
 
     def prepare_data(self, client_df, invoice_df):
         client_df_columns = list(client_df.columns)
@@ -311,7 +332,7 @@ class FDDataset4Test(FDDataset):
             )
         return client_ids, torch.stack([x for x in x1]), torch.stack(x2_temp), seq_lens
 
-    def run_test(self, model, device, csv_file, type_ = 0):
+    def run_test(self, model, device, prob_csv_file, pred_csv_file, type_ = 0):
         model.eval()
         prob_list = [] # list of probability
         y_pred_list = []
@@ -346,10 +367,31 @@ class FDDataset4Test(FDDataset):
                 y_pred_list.extend((logits<0.5).to(int).cpu().numpy())
                 prob_list.extend(logits.cpu().detach().numpy())
       
-        pd.DataFrame(zip(client_ids, prob_list)).to_csv(csv_file, header= ["client_id", "target"])
+        pd.DataFrame(zip(client_ids, prob_list)).to_csv(prob_csv_file, header= ["client_id", "target"], index=None)
+        pd.DataFrame(zip(client_ids, y_pred_list)).to_csv(pred_csv_file, header= ["client_id", "target"], index=None)
         
         self.prob_list = prob_list
         self.y_pred_list = y_pred_list
+        self.client_ids = client_ids
+
+    def __iter__(self): # iterator to load data
+    	assert self.batch_size
+    	self.batch_size = len(self.data) if self.batch_size > len(self.data) else self.batch_size
+    	n_samples = len(self.data)
+    	i = 0
+    	if not self.normalize :
+    		while n_samples > i :
+    			i += self.batch_size
+    			yield self.generate_batch(self.data[i-self.batch_size:i])
+    	else :
+	    	while n_samples > i :
+	    		i += self.batch_size
+	    		ids, x1, x2, seq_lens = self.generate_batch(self.data[i-self.batch_size:i])
+	    		x1 = torch.from_numpy(preprocessing.normalize(x1)).to(x1.dtype)
+	    		t = x2.dtype
+	    		for i in range(x2.size(1)) :
+	    			x2[:,i,:] =  torch.from_numpy(preprocessing.normalize(x2[:,i,:])).to(t)
+	    		yield  ids, x1, x2, seq_lens
 
 ##### training
 
@@ -468,7 +510,6 @@ def train(model, optimizer, criterion, train_data, val_data, device, n_epochs, t
 def setting(model_class, lr = 3e-5, type_ = 0, model_kwargs = {}) :
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    n_gpu = torch.cuda.device_count()
 
     if type_ == 0 :
         criterion = nn.CrossEntropyLoss()
@@ -482,7 +523,7 @@ def setting(model_class, lr = 3e-5, type_ = 0, model_kwargs = {}) :
 
     model = model.to(device)
     criterion = criterion.to(device)
-    if n_gpu > 1 : # use Data Parallelism with Multi-GPU  
+    if torch.cuda.device_count() > 1 : # use Data Parallelism with Multi-GPU  
         model = nn.DataParallel(model)
     
     return model, optimizer, criterion, device
@@ -504,7 +545,7 @@ def get_upsampled(train_data):
                           replace=True, # sample with replacement
                           n_samples=len(not_fraud), # match number in majority class
                           random_state=27) # reproducible results
-      # combine majority and upsampled minority
+    # combine majority and upsampled minority
     upsampled = not_fraud +  fraud_upsampled # this become a training data
     return upsampled
 
